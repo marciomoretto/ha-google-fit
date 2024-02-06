@@ -1,0 +1,7 @@
+patch_hydration_data:
+  description: Patch hydration data to Google Fit API
+  fields:
+    volume:
+      description: Hydration volume in liters
+      example: 0.3
+      required: true

@@ -48,6 +48,8 @@ DEFAULT_ACCESS = [
     "https://www.googleapis.com/auth/fitness.blood_glucose.read",
     "https://www.googleapis.com/auth/fitness.heart_rate.read",
     "https://www.googleapis.com/auth/fitness.oxygen_saturation.read",
+    "https://www.googleapis.com/auth/fitness.nutrition.write"
+
 ]
 
 # Sleep Data Enum. Taken from:

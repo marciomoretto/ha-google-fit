@@ -30,7 +30,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     LOGGER.debug("Attempting to create OAuth2 session")
     session = OAuth2Session(hass, entry, implementation)
-    auth = AsyncConfigEntryAuth(async_get_clientsession(hass), session)
+    auth = AsyncConfigEntryAuth(hass, async_get_clientsession(hass), session)
     try:
         LOGGER.debug("Checking OAuth2 session is valid.")
         await auth.check_and_refresh_token()
@@ -50,6 +50,22 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "auth": auth,
         "coordinator": coordinator,
     }
+
+    # Registrar o serviço para patch de dados de hidratação
+    async def hydration_data_service(call) -> None:
+        """Service to patch hydration data."""
+        coordinator = Coordinator(hass=hass, config=entry, auth=auth)
+        volume = call.data.get("volume")
+        await coordinator.patch_hydration_data(volume)
+
+    hass.services.async_register(
+        DOMAIN, 'hydration_data', hydration_data_service
+    )
+
+
+    # Criação do DataSource
+    data_source_id = await auth.create_data_source()
+    hass.data[DOMAIN][entry.entry_id]['data_source_id'] = data_source_id
 
     await hass.config_entries.async_forward_entry_setup(entry, PLATFORM)
     entry.async_on_unload(entry.add_update_listener(update_listener))

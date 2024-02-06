@@ -31,12 +31,14 @@ class AsyncConfigEntryAuth(OAuthClientAuthHandler):
 
     def __init__(
         self,
+        hass: HomeAssistant,
         websession: ClientSession,
         oauth2Session: config_entry_oauth2_flow.OAuth2Session,
     ) -> None:
         """Initialise Google Fit Auth."""
         LOGGER.debug("Initialising Google Fit Authentication Session")
         self.oauth_session = oauth2Session
+        self.hass = hass
         self.discovery_cache = SimpleDiscoveryCache()
         super().__init__(websession)
 
@@ -75,6 +77,125 @@ class AsyncConfigEntryAuth(OAuthClientAuthHandler):
 
         return await hass.async_add_executor_job(get_fitness)
 
+    async def create_data_source(self):
+        """Criar um DataSource no Google Fit."""
+        credentials = Credentials(token=self.access_token)
+        service = build('fitness', 'v1', credentials=credentials)
+
+        data_source = {
+            "type": "raw",
+            "application": {
+                "detailsUrl": "https://github.com/marciomoretto/ha-core.git",
+                "name": "HA Hydration Tracker",
+                "version": "1"
+            },
+            "dataType": {
+                "field": [
+                    {
+                        "name": "volume",
+                        "format": "floatPoint"
+                    }
+                ],
+                "name": "com.google.hydration"
+            },
+            "device": {
+                "manufacturer": "Home Assistant",
+                "model": "Hydration Tracker",
+                "type": "scale",
+                "uid": "home_assistant_hydration_tracker4",
+                "version": "1"
+            }
+        }
+        try:
+            created_data_source = await self.hass.async_add_executor_job(
+                lambda: service.users().dataSources().create(
+                    userId='me', body=data_source).execute())
+            return created_data_source['dataStreamId']
+        except Exception as e:
+            LOGGER.error(f"Failed to create data source: {e}")
+            return None
+
+    async def patch_hydration_data(self, volume: float, data_source_id: str):
+        """Patch hydration data to Google Fit API."""
+        try:
+            credentials = Credentials(await self.check_and_refresh_token())
+            LOGGER.debug("Successfully retrieved existing access credentials.")
+        except RefreshError as ex:
+            LOGGER.warning(
+                "Failed to refresh account access token. Starting re-authentication."
+            )
+            self.oauth_session.config_entry.async_start_reauth(self.oauth_session.hass)
+            raise ex
+
+        # Obter o intervalo de tempo
+        interval = self._get_interval()
+
+        # Extrair startTimesNs e endTimesNano do intervalo
+        start_time_ns, end_time_ns = map(int, interval.split("-"))
+
+        # Construir o serviço da API do Google Fit
+        service = build("fitness", "v1", credentials=credentials)
+        if service is None:
+            raise Exception("Falha ao criar o serviço. Verifique a configuração da API.")
+
+        if service.users() is None:
+            raise Exception("O método 'users' não está disponível para este serviço.")
+
+        # Dados específicos da requisição
+        dataset_id = f"{start_time_ns}-{end_time_ns}"
+#        datasource_id = "raw:com.google.hydration:292824132082:unknown:unknown:181092225197-m2b19k6o6ed9j1lt1djltbem85k0ied1.apps.googleusercontent.com"
+#        datasource_id = "raw%3Acom.google.hydration%3A292824132082%3Aunknown%3Aunknown%3A181092225197-m2b19k6o6ed9j1lt1djltbem85k0ied1.apps.googleusercontent.com"
+
+        # Construir o corpo da requisição
+        patch_data = {
+            "minStartTimeNs": start_time_ns,
+            "maxEndTimeNs": end_time_ns,
+            "dataSourceId": data_source_id,
+            "point": [
+                {
+                    "dataTypeName": "com.google.hydration",
+                    "startTimeNanos": start_time_ns,
+                    "endTimeNanos": end_time_ns,
+                    "value": [
+                        {
+                            "fpVal": volume
+                        }
+                    ]
+                }
+            ]
+        }
+
+        response = await self.hass.async_add_executor_job(
+            lambda: service.users().dataSources().datasets().patch(
+                userId="me",
+                dataSourceId=data_source_id,
+                datasetId=dataset_id,
+                body=patch_data
+            ).execute()
+        )
+        return response
+
+    def _get_interval(self, interval_period: int = 0) -> str:
+        """Return the necessary interval for API queries, with start and end time in nanoseconds.
+
+        If midnight_reset is true, start time is considered to be midnight of that day.
+        If false, start time is considered to be exactly 24 hours ago.
+        """
+        start = 0
+        if interval_period == 0:
+            start = (
+                int(
+                    datetime.combine(
+                        datetime.today().date(), datetime.min.time()
+                    ).timestamp()
+                )
+                * NANOSECONDS_SECONDS_CONVERSION
+            )
+        else:
+            start = int(datetime.today().timestamp()) - interval_period
+            start = start * NANOSECONDS_SECONDS_CONVERSION
+        now = int(datetime.today().timestamp() * NANOSECONDS_SECONDS_CONVERSION)
+        return f"{start}-{now}"
 
 class SimpleDiscoveryCache(Cache):
     """A very simple discovery cache."""
