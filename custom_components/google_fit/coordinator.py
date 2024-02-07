@@ -99,8 +99,7 @@ class Coordinator(DataUpdateCoordinator):
     async def patch_hydration_data(self, volume: float) -> None:
         """Patch hydration data to Google Fit API."""
         try:
-            data_source_id = self.hass.data[DOMAIN][self._config.entry_id]['data_source_id']
-            await self._auth.patch_hydration_data(volume, data_source_id)
+            await self._auth.patch_hydration_data(volume)
             LOGGER.debug("Hydration data successfully patched.")
         except Exception as e:
             LOGGER.error("Error patching hydration data: %s", e)

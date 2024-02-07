@@ -23,7 +23,7 @@ from .api_types import (
     LastPointSensorDescription,
     SumSessionSensorDescription,
 )
-from .const import SLEEP_STAGE, LOGGER, NANOSECONDS_SECONDS_CONVERSION
+from .const import SLEEP_STAGE, LOGGER, NANOSECONDS_SECONDS_CONVERSION, DOMAIN
 
 
 class AsyncConfigEntryAuth(OAuthClientAuthHandler):
@@ -82,6 +82,16 @@ class AsyncConfigEntryAuth(OAuthClientAuthHandler):
         credentials = Credentials(token=self.access_token)
         service = build('fitness', 'v1', credentials=credentials)
 
+        # Tente listar as fontes de dados existentes primeiro
+        existing_data_sources = await self.hass.async_add_executor_job(
+            lambda: service.users().dataSources().list(userId='me').execute())
+
+        # Verifique se a fonte de dados desejada já existe
+        for data_source in existing_data_sources.get('dataSource', []):
+            if data_source.get('dataStreamId', '').endswith('home_assistant_hydration_tracker'):
+                LOGGER.info("Data source already exists, reusing it.")
+                return data_source['dataStreamId']
+
         data_source = {
             "type": "raw",
             "application": {
@@ -115,7 +125,7 @@ class AsyncConfigEntryAuth(OAuthClientAuthHandler):
             LOGGER.error(f"Failed to create data source: {e}")
             return None
 
-    async def patch_hydration_data(self, volume: float, data_source_id: str):
+    async def patch_hydration_data(self, volume: float):
         """Patch hydration data to Google Fit API."""
         try:
             credentials = Credentials(await self.check_and_refresh_token())
@@ -143,8 +153,7 @@ class AsyncConfigEntryAuth(OAuthClientAuthHandler):
 
         # Dados específicos da requisição
         dataset_id = f"{start_time_ns}-{end_time_ns}"
-#        datasource_id = "raw:com.google.hydration:292824132082:unknown:unknown:181092225197-m2b19k6o6ed9j1lt1djltbem85k0ied1.apps.googleusercontent.com"
-#        datasource_id = "raw%3Acom.google.hydration%3A292824132082%3Aunknown%3Aunknown%3A181092225197-m2b19k6o6ed9j1lt1djltbem85k0ied1.apps.googleusercontent.com"
+        data_source_id = self.hass.data[DOMAIN][self.oauth_session.config_entry.entry_id]['data_source_id']
 
         # Construir o corpo da requisição
         patch_data = {
